@@ -97,32 +97,46 @@ if df_incidenti is not None:
         print(df_finale[['TIME_PERIOD', 'Comune', 'DATA_TYPE', 'OBS_VALUE']].tail())
     else:
         print("\nErrore: Nessun dato è stato unito.")
-# --- 4. Analisi dei Dati: Trend Storico Nazionale (2021-2025) ---
-print("\n--- Analisi del Trend Storico Nazionale (2021-2025) ---")
+# --- 4. Calcolo dei KPI Aziendali (Pro Capite e Densità) ---
+print("\n--- Generazione KPI per Power BI ---")
 
 # Ricarichiamo il dataset combinato per sicurezza
 df_analisi = pd.read_csv(OUTPUT_FINALE, low_memory=False)
 
-# Definiamo la lista completa degli anni richiesti dal 2021 al 2025
-anni_ricerca = [2021, 2022, 2023, 2024, 2025]
+# Identifichiamo le colonne corrette per Popolazione e Superficie
+col_pop = [c for c in df_analisi.columns if 'popolazione' in c.lower() or 'pop' in c.lower()]
+col_sup = [c for c in df_analisi.columns if 'superficie' in c.lower() or 'kmq' in c.lower() or 'sup' in c.lower()]
 
-# Filtriamo il dataset per gli anni selezionati
-df_quinquennio = df_analisi[df_analisi['TIME_PERIOD'].isin(anni_ricerca)]
+if col_pop and col_sup:
+    nome_pop = col_pop[0]
+    nome_sup = col_sup[0]
+    print(f"Colonne rilevate: Popolazione -> '{nome_pop}', Superficie -> '{nome_sup}'")
+    
+    # Pulizia: convertiamo in numerico eliminando eventuali spazi o caratteri strani
+    df_analisi[nome_pop] = pd.to_numeric(df_analisi[nome_pop].astype(str).str.replace('.', '').str.replace(',', '.'), errors='coerce')
+    df_analisi[nome_sup] = pd.to_numeric(df_analisi[nome_sup].astype(str).str.replace(',', '.'), errors='coerce')
+    df_analisi['OBS_VALUE'] = pd.to_numeric(df_analisi['OBS_VALUE'], errors='coerce')
+    
+    # Creazione dei sotto-dataset per isolare gli incidenti stradali totali (ROADACC)
+    df_incidenti_soli = df_analisi[df_analisi['DATA_TYPE'] == 'ROADACC'].copy()
+    
+    # 1. Calcolo tasso incidenti pro capite (ogni 1.000 abitanti per renderlo leggibile)
+    df_incidenti_soli['incidenti_pro_capite_1k'] = (df_incidenti_soli['OBS_VALUE'] / df_incidenti_soli[nome_pop]) * 1000
+    
+    # 2. Calcolo densità incidenti per Km Quadrato
+    df_incidenti_soli['densita_incidenti_kmq'] = df_incidenti_soli['OBS_VALUE'] / df_incidenti_soli[nome_sup]
+    
+    # Ordiniamo per vedere i comuni più rischiosi del 2023 (Rapporto aziendale)
+    df_2023 = df_incidenti_soli[df_incidenti_soli['TIME_PERIOD'] == 2023]
+    
+    print("\nTop 5 Comuni per densità di incidenti per Km² (2023):")
+    print(df_2023.sort_values(by='densita_incidenti_kmq', ascending=False)[['Comune', 'OBS_VALUE', 'densita_incidenti_kmq']].head())
+    
+    # Salva il dataset definitivo arricchito per Power BI
+    DATASET_KPI = os.path.join(DATA_DIR, "dataset_kpi_powerbi.csv")
+    df_incidenti_soli.to_csv(DATASET_KPI, index=False)
+    print(f"\n[Successo] Dataset con KPI salvato per Power BI in: {DATASET_KPI}")
 
-if not df_quinquennio.empty:
-    # Raggruppiamo per Anno e Tipo Dato, sommando i valori totali a livello nazionale
-    trend_nazionale = df_quinquennio.groupby(['TIME_PERIOD', 'DATA_TYPE'])['OBS_VALUE'].sum().unstack()
-
-    # Rinominiamo le colonne per renderle chiare nella relazione d'esame
-    colonne_rendiconto = {}
-    if 'ROADACC' in trend_nazionale.columns:
-        colonne_rendiconto['ROADACC'] = 'Totale Incidenti'
-    if 'KILLINJ' in trend_nazionale.columns:
-        colonne_rendiconto['KILLINJ'] = 'Totale Morti/Feriti'
-        
-    trend_nazionale = trend_nazionale.rename(columns=colonne_rendiconto)
-
-    print("\nTabella riassuntiva del trend nazionale:")
-    print(trend_nazionale)
 else:
-    print("Nessun dato trovato per gli anni selezionati nell'intervallo 2021-2025.")
+    print("\n[Errore] Impossibile trovare le colonne di popolazione o superficie nel file.")
+    print("Colonne disponibili nel file:", df_analisi.columns.tolist())
