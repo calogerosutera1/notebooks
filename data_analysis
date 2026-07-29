@@ -1,0 +1,53 @@
+import os
+import pandas as pd
+import requests
+
+# Configurazione dei percorsi
+# Adatta questi percorsi se i nomi delle tue cartelle sono leggermente diversi
+DATA_DIR = os.path.join("..", "data")
+INCIDENTI_OUTPUT = os.path.join(DATA_DIR, "incidenti_raw.csv")
+
+# Crea la cartella data se non esiste ancora
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# Gestione del Download
+# Il controllo os.path.exists verifica se il file è già sul pc
+if not os.path.exists(INCIDENTI_OUTPUT):
+    print("File non trovato. Avvio download dei dati incidenti dall'API ISTAT...")
+    
+    try:
+        # URL dell'API ISTAT 
+        url_istat = "https://esploradati.istat.it/SDMXWS/rest/data/41_983"
+        
+        response = requests.get(url_istat)
+        response.raise_for_status()  # Genera un errore se il download fallisce
+        
+        # Salvataggio del file sul pc
+        with open(INCIDENTI_OUTPUT, "wb") as file:
+            file.write(response.content)
+        print(f"Download completato con successo! Salvato in: {INCIDENTI_OUTPUT}")
+        
+    except Exception as e:
+        print(f"Errore durante il download dall'API ISTAT: {e}")
+else:
+    # Se il file c'è già, salta il download ed esegue lo script istantaneamente
+    print("I dati sugli incidenti sono già presenti in locale. Salto il download.")
+
+
+# fase di Ispezione Iniziale
+print("\nCaricamento e analisi del dataset incidenti...")
+
+try:
+    # Carica in memoria il file CSV 
+    df_incidenti = pd.read_csv(INCIDENTI_OUTPUT)
+    
+    # Mostra l'anteprima visiva delle prime 5 righe
+    print("\n--- Prime 5 righe del dataset ---")
+    print(df_incidenti.head())
+    
+    # Mostra quante righe totali, nomi delle colonne, dati mancanti
+    print("\n--- Informazioni sulla struttura dei dati ---")
+    df_incidenti.info()
+
+except Exception as e:
+    print(f"Errore durante la lettura del file CSV con Pandas: {e}")
