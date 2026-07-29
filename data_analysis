@@ -2,52 +2,114 @@ import os
 import pandas as pd
 import requests
 
-# Configurazione dei percorsi
-# Adatta questi percorsi se i nomi delle tue cartelle sono leggermente diversi
+# --- Configurazione dei percorsi (Path) ---
 DATA_DIR = os.path.join("..", "data")
 INCIDENTI_OUTPUT = os.path.join(DATA_DIR, "incidenti_raw.csv")
+COMUNI_2021_PATH = os.path.join(DATA_DIR, "comuni_2021.csv")
 
 # Crea la cartella data se non esiste ancora
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# Gestione del Download
-# Il controllo os.path.exists verifica se il file è già sul pc
+
+# --- 1. Gestione del Download (Efficiente) ---
 if not os.path.exists(INCIDENTI_OUTPUT):
     print("File non trovato. Avvio download dei dati incidenti dall'API ISTAT...")
-    
     try:
-        # URL dell'API ISTAT 
-        url_istat = "https://esploradati.istat.it/SDMXWS/rest/data/41_983"
+        # URL dell'API ISTAT (inserisci qui il tuo URL se diverso)
+        url_istat = "https://istat.it"
         
         response = requests.get(url_istat)
-        response.raise_for_status()  # Genera un errore se il download fallisce
+        response.raise_for_status()
         
-        # Salvataggio del file sul pc
         with open(INCIDENTI_OUTPUT, "wb") as file:
             file.write(response.content)
         print(f"Download completato con successo! Salvato in: {INCIDENTI_OUTPUT}")
-        
     except Exception as e:
         print(f"Errore durante il download dall'API ISTAT: {e}")
 else:
-    # Se il file c'è già, salta il download ed esegue lo script istantaneamente
     print("I dati sugli incidenti sono già presenti in locale. Salto il download.")
 
 
-# fase di Ispezione Iniziale
-print("\nCaricamento e analisi del dataset incidenti...")
-
+# --- 2. Caricamento Dataset Incidenti ---
+print("\nCaricamento del dataset incidenti...")
 try:
-    # Carica in memoria il file CSV 
     df_incidenti = pd.read_csv(INCIDENTI_OUTPUT)
-    
-    # Mostra l'anteprima visiva delle prime 5 righe
-    print("\n--- Prime 5 righe del dataset ---")
-    print(df_incidenti.head())
-    
-    # Mostra quante righe totali, nomi delle colonne, dati mancanti
-    print("\n--- Informazioni sulla struttura dei dati ---")
-    df_incidenti.info()
-
+    print(f"Dataset incidenti caricato correttamente. Righe totali: {len(df_incidenti)}")
 except Exception as e:
     print(f"Errore durante la lettura del file CSV con Pandas: {e}")
+    df_incidenti = None
+
+
+# --- 3. Unione con i Dati dei Comuni (Merge) ---
+if df_incidenti is not None:
+    print("\nAvvio fase di unione con i dati dei comuni...")
+    
+# --- 3. Unione di Tutti gli Anni (Loop Automatico) ---
+if df_incidenti is not None:
+    print("\nAvvio fase di unione automatica per tutti gli anni...")
+    
+    # Elenco degli anni per cui abbiamo i file dei comuni
+    anni_disponibili = [2021, 2022, 2023, 2025]
+    lista_dataframe_uniti = []
+
+    for anno in anni_disponibili:
+        nome_file_comuni = f"comuni_{anno}.csv"
+        path_comuni = os.path.join(DATA_DIR, nome_file_comuni)
+        
+        if os.path.exists(path_comuni):
+            print(f"\nElaborazione anno {anno}...")
+            
+            # Carica il file dei comuni dell'anno corrente
+            df_comuni = pd.read_csv(path_comuni, sep=';')
+            
+            # Filtra i dati ISTAT per l'anno corrente
+            df_istat_anno = df_incidenti[df_incidenti['TIME_PERIOD'] == anno]
+            print(f"  Righe ISTAT trovate per il {anno}: {len(df_istat_anno)}")
+            
+            # Esegui il merge per l'anno corrente
+            df_unito_anno = pd.merge(
+                df_istat_anno, 
+                df_comuni, 
+                left_on='REF_AREA', 
+                right_on='Codice Comune (numerico)',
+                how='inner'
+            )
+            print(f"  Righe dopo il merge per il {anno}: {len(df_unito_anno)}")
+            
+            # Aggiungi il risultato parziale alla lista
+            lista_dataframe_uniti.append(df_unito_anno)
+        else:
+            print(f"\n[Attenzione] File non trovato per l'anno {anno}: {nome_file_comuni}")
+
+    # Combina tutti i DataFrame annuali in un unico dataset globale
+    if lista_dataframe_uniti:
+        df_finale = pd.concat(lista_dataframe_uniti, ignore_index=True)
+        print("\n=============================================")
+        print(f"UNIONE COMPLETATA! Righe totali combinate: {len(df_finale)}")
+        print("=============================================")
+        
+        # Salvataggio del dataset pronto per l'analisi
+        OUTPUT_FINALE = os.path.join(DATA_DIR, "incidenti_comuni_completo.csv")
+        df_finale.to_csv(OUTPUT_FINALE, index=False)
+        print(f"Dataset finale salvato con successo in: {OUTPUT_FINALE}")
+        
+        print("\n--- Anteprima finale (ultime righe) ---")
+        print(df_finale[['TIME_PERIOD', 'Comune', 'DATA_TYPE', 'OBS_VALUE']].tail())
+    else:
+        print("\nErrore: Nessun dato è stato unito.")
+# --- 4. Analisi dei Dati: Top 10 Comuni per Incidenti (2023) ---
+print("\n--- Calcolo della Top 10 Comuni con più incidenti nel 2023 ---")
+
+# Ricarichiamo il dataset salvato per essere sicuri al 100% che sia accessibile
+df_analisi = pd.read_csv(OUTPUT_FINALE, low_memory=False)
+
+# Filtriamo solo l'anno 2023 e solo il tipo dato ROADACC (incidenti stradali)
+df_2023_incidenti = df_analisi[(df_analisi['TIME_PERIOD'] == 2023) & (df_analisi['DATA_TYPE'] == 'ROADACC')]
+
+# Raggruppiamo per Comune, sommiamo i valori e ordiniamo dal più grande al più piccolo
+top_10_comuni = df_2023_incidenti.groupby('Comune')['OBS_VALUE'].sum().reset_index()
+top_10_comuni = top_10_comuni.sort_values(by='OBS_VALUE', ascending=False).head(10)
+
+# Stampiamo la classifica nel terminale
+print(top_10_comuni.to_string(index=False))
+
