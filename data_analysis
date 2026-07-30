@@ -48,8 +48,9 @@ except Exception as e:
 if df_incidenti is not None:
     print("\nAvvio fase di unione automatica per tutti gli anni...")
     
-    # Elenco degli anni per cui abbiamo i file dei comuni
-    anni_disponibili = [2021, 2022, 2023, 2025]
+    # Elenco degli anni consolidati per cui abbiamo dati reali sia ISTAT che comuni
+    anni_disponibili = [2021, 2022, 2023]
+
     lista_dataframe_uniti = []
 
     for anno in anni_disponibili:
@@ -161,3 +162,28 @@ if df_finale is not None or os.path.exists(OUTPUT_FINALE):
         print(f"\n[Successo Finale] Dataset con KPI e Clustering salvato per Power BI in: {DATASET_KPI}")
     else:
         print("\n[Errore] Colonne di popolazione o superficie mancanti.")
+        # --- Machine Learning 2: Regressione Lineare per Forecasting ---
+        print("\n--- Elaborazione Regressione Lineare (Forecasting) ---")
+        from sklearn.linear_model import LinearRegression
+        import numpy as np
+
+        # Aggreghiamo gli incidenti totali a livello nazionale per anno per calcolare il trend
+        df_trend = df_incidenti_soli.groupby('TIME_PERIOD')['OBS_VALUE'].sum().reset_index()
+        
+        # Prepariamo i dati per il modello (X = Anno, y = Incidenti)
+        X_reg = df_trend['TIME_PERIOD'].values.reshape(-1, 1)
+        y_reg = df_trend['OBS_VALUE'].values
+
+        # Allineamento e addestramento del modello di regressione
+        modello_reg = LinearRegression()
+        modello_reg.fit(X_reg, y_reg)
+
+        # Prevediamo il valore per il prossimo anno di esercizio (2026)
+        anno_futuro = 2026
+        predizione_2026 = modello_reg.predict(np.array([[anno_futuro]]))[0]
+        
+        print(f"Storico incidenti analizzato:\n{df_trend}")
+        print(f"--> Previsione lineare degli incidenti totali in Italia per il {anno_futuro}: {int(predizione_2026)}")
+
+        # Creiamo una colonna di forecast nel dataset principale per esporla in Power BI
+        df_incidenti_soli['Forecast_Trend_Coefficiente'] = modello_reg.coef_[0]
