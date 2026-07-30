@@ -2,36 +2,22 @@ import os
 import pandas as pd
 import requests
 
-# --- Configurazione dei percorsi ---
-DATA_DIR = os.path.join("..", "data")
+# --- Configurazione dei percorsi ASSOLUTI  ---
+DATA_DIR = r"C:\Users\Lillo\Desktop\Capstone_Project_Boolean\data"
 INCIDENTI_OUTPUT = os.path.join(DATA_DIR, "incidenti_raw.csv")
+OUTPUT_FINALE = os.path.join(DATA_DIR, "incidenti_comuni_completo.csv")
 
 # Crea la cartella data se non esiste ancora
 os.makedirs(DATA_DIR, exist_ok=True)
 
 
-# --- Gestione del Download Resiliente (Richiesta API Unica) ---
+# --- Gestione del Download Resiliente (Forzatura Locale) ---
 if not os.path.exists(INCIDENTI_OUTPUT):
-    print("File locale non trovato. Avvio download sicuro dall'API ISTAT...")
-    try:
-        # Endpoint ufficiale fornito nella consegna del progetto
-        url_istat = "https://istat.it"
-        
-        # Header fondamentale per forzare il server ISTAT a restituire un CSV anziché un XML pesante
-        headers = {'Accept': 'application/vnd.sdmx.data+csv;version=1.0.0'}
-        
-        # Eseguiamo la chiamata impostando un timeout prudenziale visto il rallentamento del server
-        response = requests.get(url_istat, headers=headers, timeout=1200)
-        response.raise_for_status()
-        
-        # Salvataggio immediato in locale per rispettare i Rate Limit ed evitare ban di 48 ore
-        with open(INCIDENTI_OUTPUT, "wb") as file:
-            file.write(response.content)
-        print(f"Download completato con successo! Salvato in locale: {INCIDENTI_OUTPUT}")
-    except Exception as e:
-        print(f"Errore durante il download dall'API ISTAT: {e}")
+    print("[INFO LIVE] Server ISTAT offline o file mancante. Creo una struttura di backup...")
+    df_vuoto_struttura = pd.DataFrame(columns=['TIME_PERIOD', 'REF_AREA', 'DATA_TYPE', 'OBS_VALUE'])
+    df_vuoto_struttura.to_csv(INCIDENTI_OUTPUT, index=False)
 else:
-    print("I dati sugli incidenti sono già presenti in locale. Salto il download per preservare il server.")
+    print("I dati sugli incidenti sono già presenti in locale. Salto il download.")
 
 
 # --- Caricamento Dataset Incidenti ---
@@ -44,56 +30,20 @@ except Exception as e:
     df_incidenti = None
 
 
-# --- Unione di Tutti gli Anni ---
-if df_incidenti is not None:
-    print("\nAvvio fase di unione automatica per tutti gli anni...")
-    
-    # Elenco degli anni consolidati per cui abbiamo dati reali sia ISTAT che comuni
-    anni_disponibili = [2021, 2022, 2023]
+# --- Unione di Tutti gli Anni (Bypass con File Locale Esistente) ---
+if os.path.exists(OUTPUT_FINALE):
+    print(f"\n[INFO] File unito trovato! Salto il ciclo dei singoli anni.")
+    df_finale = pd.read_csv(OUTPUT_FINALE, low_memory=False)
+    print(f"[Successo] Dataset completo caricato correttamente. Righe: {len(df_finale)}")
+else:
+    print(f"\n[ERRORE] Impossibile trovare il file in {OUTPUT_FINALE}")
+    df_finale = None
 
-    lista_dataframe_uniti = []
-
-    for anno in anni_disponibili:
-        nome_file_comuni = f"comuni_{anno}.csv"
-        path_comuni = os.path.join(DATA_DIR, nome_file_comuni)
-        
-        if os.path.exists(path_comuni):
-            print(f"\nElaborazione anno {anno}...")
-            df_comuni = pd.read_csv(path_comuni, sep=';')
-            
-            # Filtra i dati ISTAT per l'anno corrente (conversione prudenziale in int dell'anno)
-            df_istat_anno = df_incidenti[df_incidenti['TIME_PERIOD'].astype(str).str.contains(str(anno), na=False)]
-            print(f"  Righe ISTAT trovate per il {anno}: {len(df_istat_anno)}")
-            
-            # Merge basato sul codice numerico univoco del comune
-            df_unito_anno = pd.merge(
-                df_istat_anno, 
-                df_comuni, 
-                left_on='REF_AREA', 
-                right_on='Codice Comune (numerico)',
-                how='inner'
-            )
-            print(f"  Righe dopo il merge per il {anno}: {len(df_unito_anno)}")
-            lista_dataframe_uniti.append(df_unito_anno)
-        else:
-            print(f"\n[Attenzione] File non trovato per l'anno {anno}: {nome_file_comuni}")
-
-    if lista_dataframe_uniti:
-        df_finale = pd.concat(lista_dataframe_uniti, ignore_index=True)
-        print("\n=============================================")
-        print(f"UNIONE COMPLETATA! Righe totali combinate: {len(df_finale)}")
-        print("=============================================")
-        
-        OUTPUT_FINALE = os.path.join(DATA_DIR, "incidenti_comuni_completo.csv")
-        df_finale.to_csv(OUTPUT_FINALE, index=False)
-    else:
-        print("\nErrore: Nessun dato è stato unito.")
-        df_finale = None
 
 # --- Calcolo dei KPI Aziendali e Machine Learning ---
-if df_finale is not None or os.path.exists(OUTPUT_FINALE):
+if df_finale is not None:
     print("\n--- Generazione KPI per Power BI ---")
-    df_analisi = pd.read_csv(OUTPUT_FINALE, low_memory=False)
+    df_analisi = df_finale.copy()
 
     col_pop = [c for c in df_analisi.columns if 'popolazione' in c.lower() or 'pop' in c.lower()]
     col_sup = [c for c in df_analisi.columns if 'superficie' in c.lower() or 'kmq' in c.lower() or 'sup' in c.lower()]
@@ -123,7 +73,7 @@ if df_finale is not None or os.path.exists(OUTPUT_FINALE):
         from sklearn.cluster import KMeans
         from sklearn.preprocessing import StandardScaler
 
-        # Estraiamo le feature rimuovendo record incompleti. Usiamo REF_AREA come ancora di unione sicura
+        # Estraiamo le feature rimuovendo record incompleti
         df_cluster = df_clustering_input[['REF_AREA', 'incidenti_pro_capite_1k', 'densita_incidenti_kmq']].dropna().copy()
         features = ['incidenti_pro_capite_1k', 'densita_incidenti_kmq']
 
@@ -137,7 +87,6 @@ if df_finale is not None or os.path.exists(OUTPUT_FINALE):
 
         # Mappatura ordinata basata sui centri dei cluster per identificare la reale gravità di rischio
         cluster_centers = kmeans.cluster_centers_
-        # Sommiamo i valori scalati dei centri per ordinare dal cluster più sicuro a quello più rischioso
         sorted_cluster_indices = cluster_centers.sum(axis=1).argsort()
         
         mapping_rischio = {
@@ -153,15 +102,9 @@ if df_finale is not None or os.path.exists(OUTPUT_FINALE):
         # Unione sicura tramite codice identificativo dell'area (REF_AREA)
         df_incidenti_soli = pd.merge(df_incidenti_soli, df_cluster[['REF_AREA', 'Cluster_Rischio']], on='REF_AREA', how='left')
         
-        # Per gli altri anni (es. 2021, 2022), propaghiamo l'etichetta del cluster calcolata per mantenere la coerenza
+        # Per gli altri anni (es. 2021, 2022), propaghiamo l'etichetta del cluster calcolata
         df_incidenti_soli['Cluster_Rischio'] = df_incidenti_soli.groupby('REF_AREA')['Cluster_Rischio'].ffill().bfill()
 
-        # Esportazione pulita per Power BI
-        DATASET_KPI = os.path.join(DATA_DIR, "dataset_kpi_powerbi.csv")
-        df_incidenti_soli.to_csv(DATASET_KPI, index=False)
-        print(f"\n[Successo Finale] Dataset con KPI e Clustering salvato per Power BI in: {DATASET_KPI}")
-    else:
-        print("\n[Errore] Colonne di popolazione o superficie mancanti.")
         # --- Machine Learning 2: Regressione Lineare per Forecasting ---
         print("\n--- Elaborazione Regressione Lineare (Forecasting) ---")
         from sklearn.linear_model import LinearRegression
@@ -174,11 +117,9 @@ if df_finale is not None or os.path.exists(OUTPUT_FINALE):
         X_reg = df_trend['TIME_PERIOD'].values.reshape(-1, 1)
         y_reg = df_trend['OBS_VALUE'].values
 
-        # Allineamento e addestramento del modello di regressione
         modello_reg = LinearRegression()
         modello_reg.fit(X_reg, y_reg)
 
-        # Prevediamo il valore per il prossimo anno di esercizio (2026)
         anno_futuro = 2026
         predizione_2026 = modello_reg.predict(np.array([[anno_futuro]]))[0]
         
@@ -187,3 +128,42 @@ if df_finale is not None or os.path.exists(OUTPUT_FINALE):
 
         # Creiamo una colonna di forecast nel dataset principale per esporla in Power BI
         df_incidenti_soli['Forecast_Trend_Coefficiente'] = modello_reg.coef_[0]
+
+        # --- Machine Learning 3: Charting (Visualizzazione dei Cluster in Python) ---
+        print("\n--- Generazione Grafico dei Cluster (Charting) ---")
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        plt.figure(figsize=(10, 6))
+        sns.set_theme(style="whitegrid")
+
+        colori_cluster = {'Basso Rischio': '#2ecc71', 'Medio Rischio': '#f1c40f', 'Alto Rischio': '#e74c3c'}
+        
+        sns.scatterplot(
+            data=df_cluster,
+            x='incidenti_pro_capite_1k',
+            y='densita_incidenti_kmq',
+            hue='Cluster_Rischio',
+            palette=colori_cluster,
+            alpha=0.7,
+            edgecolor=None
+        )
+
+        plt.title('Segmentazione del Rischio Stradale nei Comuni Italiani (K-Means)', fontsize=14, fontweight='bold', pad=15)
+        plt.xlabel('Tasso Incidenti Pro Capite (ogni 1.000 abitanti)', fontsize=11)
+        plt.ylabel('Densità Incidenti per Kmq (Scala Log)', fontsize=11)
+        plt.yscale('log')  # Scala logaritmica fondamentale per non schiacciare i dati verso il basso
+        plt.legend(title='Livello di Rischio', loc='upper right')
+        plt.tight_layout()
+
+        # Salvataggio dell'immagine sul tuo desktop
+        PLOT_OUTPUT = os.path.join(DATA_DIR, "visualizzazione_cluster.png")
+        plt.savefig(PLOT_OUTPUT, dpi=300)
+        print(f"[Successo Charting] Grafico dei cluster salvato in: {PLOT_OUTPUT}")
+
+        # Esportazione pulita per Power BI
+        DATASET_KPI = os.path.join(DATA_DIR, "dataset_kpi_powerbi.csv")
+        df_incidenti_soli.to_csv(DATASET_KPI, index=False)
+        print(f"\n[Successo Finale] Dataset con KPI e Clustering salvato per Power BI in: {DATASET_KPI}")
+    else:
+        print("\n[Errore] Colonne di popolazione o superficie mancanti.")
